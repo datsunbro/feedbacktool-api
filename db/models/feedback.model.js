@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { Topic } = require('./topic.model');
 
 const FeedbackSchema = new mongoose.Schema({
     feedback: {

@@ -12,7 +12,6 @@ const jwt = require('jsonwebtoken');
 const { List, Task } = require('./db/models');
 const { Topic } = require('./db/models/topic.model');
 const { Feedback } = require('./db/models/feedback.model');
-const e = require('express');
 const { User } = require('./db/models/user.model');
 
 // Load middleware
@@ -21,7 +20,8 @@ app.use(bodyParser.json());
 // CORS HEADERS MIDDLEWARE
 app.use(function(req, res, next) {
     res.header("Access-Control-Allow-Origin", "*");
-    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+    res.header("Access-Control-Allow-Methods", '*');
     next();
   });
 
@@ -38,19 +38,20 @@ app.get('/', (req, res) => {
 /**
  * POST /login
  * Purpose: Authenticate a user
- */
+
 app.post('/login', (req, res) => {
     // Authenticate the user
     const userName = res.body;
     res.send(userName);
-});
+}); */
 
 /**
  * GET all topics
  * Purpose: Retrieve all topics from db
  */
-app.get('/topics', authenticateToken, (req, res) => {
-    Topic.find( {} ).then( (topics) => {
+app.get('/topics', (req, res) => {
+    Topic.find( {} ).sort({ date: -1 })
+    .then( (topics) => {
         res.send(topics);
     });
 });
@@ -81,7 +82,7 @@ app.get('/topics/:id', (req, res) => {
  * POST /topics
  * Purpose: Create a new topic
  */
-app.post('/topics', (req, res) => {
+app.post('/topics', authenticateToken, (req, res) => {
     // Create a new topic and return the new topic document back to the user (including the id)
     // The topic information will be passed in via the JSON request body
     
@@ -105,7 +106,7 @@ app.post('/topics', (req, res) => {
  * GET /topics/:id/feedback
  * Purpose: Retrieve all feedback related to a certain topic (specified by topicId)
  */
-app.get('/topics/:id/feedback', (req, res) => {
+app.get('/topics/:id/feedback', authenticateToken, (req, res) => {
     Feedback.find({
         _topicId: req.params.id
     }).then( (feedback) => {
@@ -114,10 +115,45 @@ app.get('/topics/:id/feedback', (req, res) => {
 }); 
 
 /**
+ * PATCH /topics/:id/feedback
+ * Purpose: Update a single topic (specified by topicId)
+ */
+app.patch('/topics/:id/', authenticateToken, (req, res) => {
+    const updatedTopic = req.body;
+    Topic.findOneAndUpdate(
+        {_id: req.params.id },
+        updatedTopic 
+    ).then( (topic) => {
+
+        res.send(topic);
+    })
+}); 
+
+/**
+ * DELETE /topics/:id/
+ * Purpose: Delete a specified topic (specified by topicId)
+ */
+app.delete('/topics/:id', authenticateToken, (req, res) => {
+    // Delete the specified task
+    if(mongoose.Types.ObjectId.isValid(req.params.id)){
+        Topic.findOneAndDelete({ 
+            _id: req.params.id,
+        }).then( (removedTaskDoc) => {
+            if(removedTaskDoc){
+                return res.status(200).send(removedTaskDoc);
+            }
+            
+        }); 
+    } else {
+        return res.status(422).send();
+    }
+});
+
+/**
  * GET /feedback
  * Purpose: Retrieve all current feedbacks from db
  */
-app.get('/feedback', (req, res) => {
+app.get('/feedback', authenticateToken, (req, res) => {
     Feedback.find({}).then( (feedback) => {
         res.send(feedback);
     })
@@ -138,6 +174,7 @@ app.post('/feedback', (req, res) => {
         feedback,
         _topicId
     });
+    // Todo: check for valid object 
     newFeedback.save().then( (feedbackDocument) => {
         // Full topic document (including id) is returned
         res.send(feedbackDocument);
@@ -148,27 +185,27 @@ app.post('/feedback', (req, res) => {
  * DELETE /lists/:listId/taks/:taskId
  * Purpose: Delete a specified taks in a specified list
  */
-app.delete('/feedback/:id', (req, res) => {
-    // Delete the specified task
-    Feedback.findOneAndRemove({ 
-        _id: req.params.id,
-
-    }).then( (removedTaskDoc) => {
-        res.send(removedTaskDoc);
-    }); 
+app.delete('/feedback/:id', authenticateToken, (req, res) => {
+    // Check if we received a valid id
+    if(mongoose.Types.ObjectId.isValid(req.params.id)) {
+        // Delete the specified task
+        Feedback.findOneAndRemove({ 
+            _id: req.params.id,
+        }).then( (removedTaskDoc) => {
+            res.send(removedTaskDoc);
+        }); 
+    } else {
+        res.status(422).send();
+    }
+    
 });
 
-app.delete('/topics/:id', (req, res) => {
-    // Delete the specified task
-    Topic.findOneAndRemove({ 
-        _id: req.params.id,
-    }).then( (removedTaskDoc) => {
-        res.send(removedTaskDoc);
-    }); 
-});
 
 app.get('/users', (req, res) => {
-    User.find({}).then((usersDocument)=> { res.send(usersDocument)});
+    User.find({})
+    .then((usersDocument)=> { 
+        res.send(usersDocument);
+    });
 });
 
 /**
@@ -178,7 +215,12 @@ app.delete('/users', (req, res) => {
     User.deleteMany({email: "tech@arzttermine.de"}).then( result => { res.send(result) });
 });
 
-app.post('/users/login', async (req, res) => {
+/**
+ * POST /login
+ * Purpose: Login a user
+ */
+app.post('/login', async (req, res) => {
+    
     // Try to find user in DB
     const user = await User.findOne({email: req.body.email}, (error, userItem) => {
         return userItem;
@@ -191,17 +233,20 @@ app.post('/users/login', async (req, res) => {
     try {
         if( await bcrypt.compare(req.body.password, user.password) ) {
             // Todo: JWT Part
-            const accessToken = jwt.sign(req.body.email, process.env.ACCESS_TOKEN_SECRET, {expiresIn: '1h'})
-            // res.status(200).send()
-            res.send( {accessToken: accessToken} );
+            const accessToken = jwt.sign({ email: req.body.email }, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' } );
+            return res.status(200).send( { userId:user._id, accessToken: accessToken } );
         } else {
-            res.send('Wrong credentials');
+            return res.status(401).send('Wrong credentials');
         }
     } catch {
-        res.status(500).send();
+        return res.status(500).send();
     }
 });
 
+/**
+ * POST /users/create
+ * Purpose: Create a new user in DB
+ */
 app.post('/users/create', async (req, res) => {
     try {
         const salt = await bcrypt.genSalt()
@@ -213,13 +258,7 @@ app.post('/users/create', async (req, res) => {
             password: hashedPassword
         });
 
-        // ToDo: add another try catch here in case of duplicate or unallowed fields
         newUser.save().then( (userDocument) => {
-            // Full user document (including id) is returned
-            const userInfo = {
-                _id: userDocument._id,
-                email: userDocument.email
-            }
             res.status(201).send(userDocument);
         });
 
@@ -228,10 +267,16 @@ app.post('/users/create', async (req, res) => {
     }
 });
 
+
+/**
+ * authenticateToken();
+ * Purpose: Authentication middleware function to check if the user sent a valid token
+ */
 function authenticateToken(req, res, next) {
+
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
-    
+
     if( token == null ) return res.sendStatus(401);
    
     jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err) => {
